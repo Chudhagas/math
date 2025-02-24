@@ -1,0 +1,31 @@
+def blueprint(tokens: list[_A]):
+    count = len(tokens)
+    if count == 0:
+        return tokens
+
+    i = 0
+    token: _A = tokens[i]
+
+    haseat = False
+
+    def taste(a: type[_A]):
+        return isinstance(tokens[i], a)
+
+    def eat():
+        nonlocal i, haseat
+        token = tokens[i]
+        i += 1 # technically the next index
+        haseat = True
+        return token
+
+    while i < count:
+        haseat = False
+        token = tokens[i]
+
+        # checks go here
+
+        count = len(tokens)
+        if not haseat:
+            i+=1
+
+    return tokens
