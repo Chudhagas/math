@@ -6,21 +6,28 @@ import math
 # TODO: color code logs
 # TODO: massive clean up
 
-class Token():
+# __debug = True
+__debug = False
+
+def debug(*args):
+    if __debug:
+        print(*args)
+
+class _Token():
     @abstractmethod
     def out(self) -> str:
         pass
 
-A = TypeVar("A", bound=Token)
+Token = TypeVar("Token", bound=_Token)
 
-def combine(*args: dict[str, A]) -> dict[str, A]:
-    result: dict[str, A] = {}
+def combine(*args: dict[str, Token]) -> dict[str, Token]:
+    result: dict[str, Token] = {}
     for each in args:
         for name, a in each.items():
             result[name] = a
     return result
 
-class Literal(Token):
+class Literal(_Token):
     def __init__(self, number: float):
         self._number: float = number
 
@@ -31,19 +38,28 @@ class Literal(Token):
     @property
     def number(self) -> float:
         val = self._number
-        a = val * 1e10
-        a = round(a)
-        a = a / 1e10
-        # print(val, a)
+        a = val
+        if abs(a%1) < 1e-15 and abs(a%1) > 0:
+            a *= 1e12
+            a = round(a)
+            a = a / 1e12
         return a
 
     @number.setter
     def number(self, val: float):
         self._number = val
 
+    @property
+    def round_number(self) -> float:
+        val = self._number
+        a = val * 1e12
+        a = round(a)
+        a = a / 1e12
+        return a
+
     @override
     def out(self):
-        return str(self.number)
+        return str(self.round_number)
 
     @override
     def __str__(self) -> str:
@@ -56,21 +72,22 @@ class Literal(Token):
 Operation = Callable[[Literal, Literal], Literal]
 Action = Callable[[Literal], Literal]
 
-class Expression(Token):
-    def __init__(self, values: list[Token]) -> None:
-        self.values: list[Token] = values
+class Expression(_Token):
+    def __init__(self, values: list[_Token]) -> None:
+        self.values: list[_Token] = values
 
     def evaluate(self):
         tokens = createExprs(self.values.copy())
-        # print(f"createExprs:   {tokens}")
+        debug(f"createExprs:   {tokens}")
         tokens = evalExprs(tokens)
-        # print(f"evalExprs:     {tokens}")
+        debug(f"evalExprs:     {tokens}")
         tokens = evalFunctions(tokens)
-        # print(f"evalFunctions: {tokens}")
+        debug(f"evalFunctions: {tokens}")
         tokens = negations(tokens)
-        # print(f"negations:     {tokens}")
+        debug(f"negations:     {tokens}")
         iter = 0
         while len(tokens) != 1 and iter < 100:
+            tokens = twoLiterals(tokens)
             tokens = combineLiterals(tokens)
             iter += 1
         return tokens
@@ -88,7 +105,7 @@ class Expression(Token):
         return ' '.join([x.out() for x in self.values])
 
 
-class Op(Token):
+class Op(_Token):
     def __init__(self, symbol: str, operation: Operation, weight: int) -> None:
         self.symbol: str = symbol
         self.operation: Operation = operation
@@ -113,15 +130,13 @@ class Op(Token):
         return str(self.symbol)
 
 
-class Function(Token):
+class Function(_Token):
     def __init__(self, name: str, action: Action) -> None:
         self.name: str = name
-        self.negate: bool = False
         self.action: Action = action
 
     def __call__(self, value: Literal) -> Literal:
         a: Literal = self.action(value)
-        a.number *= -1 if self.negate else 1
         return a
 
     @override
@@ -137,35 +152,7 @@ class Function(Token):
         return str(self.name)
 
 
-operators = {
-        "Add": Op('+', lambda x, y: Literal(x.number + y.number), 1),
-        "Sub": Op('-', lambda x, y: Literal(x.number - y.number), 1),
-        "Mul": Op('*', lambda x, y: Literal(x.number * y.number), 2),
-        "Div": Op('/', lambda x, y: Literal(x.number / y.number), 2),
-        "+": Op('+', lambda x, y: Literal(x.number + y.number), 1),
-        "-": Op('-', lambda x, y: Literal(x.number - y.number), 1),
-        "*": Op('*', lambda x, y: Literal(x.number * y.number), 2),
-        "/": Op('/', lambda x, y: Literal(x.number / y.number), 2),
-        }
-
-functions = {
-        "sin": Function("sin", lambda x: Literal(math.sin(x.number))),
-        "cos": Function("cos", lambda x: Literal(math.cos(x.number))),
-        "tan": Function("tan", lambda x: Literal(math.tan(x.number))),
-        "csc": Function("csc", lambda x: Literal(1/math.sin(x.number))),
-        "sec": Function("sec", lambda x: Literal(1/math.cos(x.number))),
-        "cot": Function("cot", lambda x: Literal(1/math.tan(x.number))),
-        "sqrt": Function("sqrt", lambda x: Literal(math.sqrt(x.number))),
-        }
-
-constants = {
-        "pi": Literal(math.pi)
-        }
-
-identifiers = combine(functions, constants) # pyright: ignore[reportArgumentType]
-
-
-class Negate(Token): # can use similar system to do factorial
+class Negate(_Token): # can use similar system to do factorial
     def __init__(self) -> None:
         pass
 
@@ -182,7 +169,7 @@ class Negate(Token): # can use similar system to do factorial
         return '-'
 
 
-class OpenParen(Token):
+class OpenParen(_Token):
     def __init__(self) -> None:
         pass
 
@@ -199,7 +186,7 @@ class OpenParen(Token):
         return '('
 
 
-class CloseParen(Token):
+class CloseParen(_Token):
     def __init__(self) -> None:
         pass
 
@@ -215,343 +202,305 @@ class CloseParen(Token):
     def out(self):
         return ')'
 
+def test(x: Literal, y: Literal) -> Literal:
+    if y.number == 0:
+        raise ZeroDivisionError("You can't divide by zero")
+    return Literal(x.number / y.number)
+
+operators = {
+        "+": Op('+', lambda x, y: Literal(x.number + y.number), 1),
+        "-": Op('-', lambda x, y: Literal(x.number - y.number), 1),
+        "*": Op('*', lambda x, y: Literal(x.number * y.number), 2),
+        # "/": Op('/', lambda x, y: Literal(x.number / y.number), 2),
+        "/": Op('/', test, 2),
+        "^": Op('^', lambda x, y: Literal(x.number ** y.number), 3),
+        "%": Op('^', lambda x, y: Literal(x.number % y.number), 4),
+        }
+
+functions = {
+        "sin": Function("sin", lambda x: Literal(math.sin(x.number))),
+        "cos": Function("cos", lambda x: Literal(math.cos(x.number))),
+        "tan": Function("tan", lambda x: Literal(math.tan(x.number))),
+        "csc": Function("csc", lambda x: Literal(1/math.sin(x.number))),
+        "sec": Function("sec", lambda x: Literal(1/math.cos(x.number))),
+        "cot": Function("cot", lambda x: Literal(1/math.tan(x.number))),
+        "sqrt": Function("sqrt", lambda x: Literal(math.sqrt(x.number))),
+        "ln": Function("ln", lambda x: Literal(math.log(x.number))),
+        "log": Function("log", lambda x: Literal(math.log10(x.number))),
+        }
+
+constants = {
+        "pi": Literal(math.pi),
+        "e": Literal(math.e)
+        }
+
+identifiers = combine(functions, constants) # pyright: ignore[reportArgumentType]
+
 
 def is_op(char: str):
-    return char in ['+', '-', '*', '/']
+    return char in operators.keys()
 
 
-def tokenize(input_string):
-    ls = [x for x in input_string]
-    tokens: list[Token] = []
-    count = len(ls)
+class StrState:
+    def __init__(self, input_string: str) -> None:
+        self.ls: list[str] = [x for x in input_string]
+        self.char: str
+        self.tokens: list[_Token] = []
+        self.i: int = 0
+        self.has_eaten: bool = False
 
-    i = 0
-    haseat = False
+    def eat(self):
+        self.char = self.ls[self.i]
+        self.i += 1
+        self.has_eaten = True
 
-    def eat():
-        nonlocal i, haseat
-        ch = ls[i]
-        i += 1
-        haseat = True
-        return ch
+    def taste(self):
+        return self.ls[self.i]
 
-    while i < count:
-        haseat = False
-        char = ls[i]
+class TokenState:
+    def __init__(self, tokens: list[_Token]) -> None:
+        self.tokens: list[_Token] = tokens
+        self.token: _Token
+        self.i: int = 0
+        self.has_eaten: bool = False
 
-        if char == '':
-            char = eat()
-            continue
+    def taste(self, a: type[_Token]):
+        return isinstance(self.tokens[self.i], a)
 
-        elif char.isdigit():
-            numstr = ""
-            has_dec = False
-            while i < count and (ls[i].isdigit() or (ls[i] == '.' and not has_dec)):
-                char = eat()
-                if char == '.':
-                    has_dec = True
-                numstr += char
-            tokens.append(Literal(float(numstr)))
+    def eat(self):
+        self.token = self.tokens[self.i]
+        self.i += 1 # technically the next index
+        self.has_eaten = True
+        return self.token
 
-        elif is_op(char):
-            lop = eat()
-            if lop == '-' and i < count: 
-                if len(tokens) < 1:
-                    tokens.append(Negate())
-                elif isinstance(tokens[len(tokens)-1], Op): # and prev is op
-                    tokens.append(Negate())
-                else:
-                    tokens.append(operators[lop])
+    def remove_token(self, idx: int):
+        _ = self.tokens.pop(idx)
+        self.i -= 1
+
+
+def input_process(func):
+    def wrapper(input_string: str)-> list[_Token]:
+        state = StrState(input_string)
+
+        while state.i < len(state.ls):
+            state.has_eaten = False
+            state.char = state.taste()
+            if state.char == '':
+                state.eat()
+                continue
             else:
-                tokens.append(operators[lop])
+                func(state)
 
-        elif char.isalpha():
-            string = ""
-            while i < count and (ls[i].isalpha()):
-                char = eat()
-                string += char
-            if string in identifiers.keys():
-                tokens.append(identifiers[string])
-            else:
-                raise SyntaxError(f"Unknown identifier: {string}")
+            if not state.has_eaten:
+                state.i += 1
 
-        elif char == '(':
-            char = eat()
-            tokens.append(OpenParen())
+        debug(state.tokens)
+        return state.tokens
 
-        elif char == ')':
-            char = eat()
-            tokens.append(CloseParen())
-
-        if not haseat:
-            i += 1
-
-    return tokens
+    return wrapper
 
 
-def createExprs(tokens: list[Token]):
-    count = len(tokens)
-    if count == 0:
+def token_process(func):
+    def wrapper(tokens: list[_Token]) -> list[_Token]:
+        state = TokenState(tokens)
+
+        if len(tokens) == 0:
+            return tokens
+
+        while state.i < len(state.tokens):
+            state.has_eaten = False
+            state.token = state.tokens[state.i]
+            func(state)
+            if not state.has_eaten:
+                state.i += 1
+
         return tokens
 
-    i = 0
-    token: Token = tokens[i]
+    return wrapper
 
-    haseat = False
+class TokenizerError(Exception):
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
 
-    def taste(a: type[Token]):
-        return isinstance(tokens[i], a)
+@input_process
+def tokenize(state: StrState):
+    eat = state.eat
 
-    def eat():
-        nonlocal i, haseat
-        token = tokens[i]
-        i += 1 # technically the next index
-        haseat = True
-        return token
+    if state.char.isdigit():
+        numstr = ""
+        has_dec = False
+        while state.i < len(state.ls) and (state.taste().isdigit() or (state.taste() == '.' and not has_dec)):
+            eat()
+            if state.char == '.':
+                has_dec = True
+            numstr += state.char
+        state.tokens.append(Literal(float(numstr)))
 
-    while i < count:
-        haseat = False
-        token = tokens[i]
+    elif is_op(state.char):
+        eat()
+        lop = state.char
+        if lop == '-' and state.i < len(state.ls): 
+            if len(state.tokens) < 1:
+                state.tokens.append(Negate())
+            else:
+                cur_tok = state.tokens[len(state.tokens)-1]
+                if isinstance(cur_tok, Op):
+                    state.tokens.append(Negate())
+                elif isinstance(cur_tok, OpenParen):
+                    state.tokens.append(Negate())
+                else:
+                    state.tokens.append(operators[lop])
+        else:
+            state.tokens.append(operators[lop])
 
-        if taste(OpenParen):
+    elif state.char.isalpha():
+        string = ""
+        sI = state.i
+        while state.i < len(state.ls) and state.taste().isalpha():
+            eat()
+            string += state.char
+        if string in identifiers.keys():
+            state.tokens.append(identifiers[string])
+        else:
+            raise TokenizerError(f"Unknown identifier", state.ls, sI, state.i-1)
+
+    elif state.char == '(':
+        eat()
+        state.tokens.append(OpenParen())
+
+    elif state.char == ')':
+        eat()
+        state.tokens.append(CloseParen())
+
+
+@token_process
+def createExprs(state: TokenState):
+    taste = state.taste
+    eat = state.eat
+    if taste(OpenParen):
+        _ = eat()
+        inner: list[_Token] = []
+        start = state.i
+        # In the scenario where we open new parenthesis, we need to make sure we include them in the
+        # expression and not prematurely exit the loop.
+        count_opened = 0
+        while state.i < len(state.tokens): # consume inner
+            if taste(OpenParen):
+                count_opened += 1
+
+            elif taste(CloseParen):
+                if count_opened > 0:
+                    count_opened -= 1
+                else:
+                    break
+            _ = eat()
+            inner.append(state.token)
+
+        if state.i < len(state.tokens) and taste(CloseParen): # incase we reached end of input before closing parenthesis (missing)
+            end = state.i
+            _ = eat()
+            bef_ind = start - 2
+            is_func = bef_ind >= 0 and isinstance(state.tokens[bef_ind], Function)
+
+            x = start if is_func else start-1
+            end = end-1 if is_func else end
+
+            for _ in range(end+1 - x):
+                state.remove_token(x)
+            state.tokens.insert(x, Expression(inner))
+        else:
+            raise SyntaxError("Missing closing parenthesis", state.tokens, state.i)
+
+
+@token_process
+def evalExprs(state: TokenState):
+    taste = state.taste
+    eat = state.eat
+
+    if taste(Expression):
+        start = state.i
+        expr: Expression = eat() # pyright: ignore[reportAssignmentType]
+        
+        tkns = expr.evaluate()
+        state.remove_token(start)
+
+        for x in range(len(tkns)):
+            state.tokens.insert(start+x, tkns[x])
+            state.i += 1
+
+
+class FunctionError(Exception):
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+
+
+@token_process
+def evalFunctions(state: TokenState):
+    taste = state.taste
+    eat = state.eat
+
+    if taste(Function):
+        fstart = state.i
+        token = eat()
+        func: Function = token # pyright: ignore[reportAssignmentType]
+        if state.i < len(state.tokens) and taste(OpenParen):
             token = eat()
-            inner: list[Token] = []
-            start = i
-            # In the scenario where we open new parenthesis, we need to make sure we include them in the
-            # expression and not prematurely exit the loop.
-            count_opened = 0
-            while i < count: # consume inner
-                if taste(OpenParen):
-                    count_opened += 1
-
-                elif taste(CloseParen):
-                    if count_opened > 0:
-                        count_opened -= 1
-                    else:
-                        break
+            inner: list[_Token] = []
+            while state.i < len(state.tokens) and not taste(CloseParen):
                 token = eat()
                 inner.append(token)
 
-            if i < count and taste(CloseParen): # incase we reached end of input before closing parenthesis (missing)
-                end = i
+            if taste(CloseParen):
+                fend = state.i
                 token = eat()
-                bef_ind = start - 2
-                is_func = bef_ind >= 0 and isinstance(tokens[bef_ind], Function)
-
-                x = start if is_func else start-1
-                end = end-1 if is_func else end
-
-                for _ in range(end+1 - x):
-                    _ = tokens.pop(x)
-                    i -= 1 # necessary!!! for the i < count
-                tokens.insert(x, Expression(inner))
-
-                pass
-            else:
-                raise SyntaxError("Missing closing parenthesis")
-
-
-        count = len(tokens) # !!!
-        if not haseat:
-            i+=1
-
-    return tokens
-    
-
-def evalExprs(tokens: list[Token]):
-    count = len(tokens)
-    if count == 0:
-        return tokens
-
-    i = 0
-    token: Token = tokens[i]
-
-    haseat = False
-
-    def taste(a: type[Token]):
-        return isinstance(tokens[i], a)
-
-    def eat():
-        nonlocal i, haseat
-        token = tokens[i]
-        i += 1 # technically the next index
-        haseat = True
-        return token
-
-    while i < count:
-        haseat = False
-        token = tokens[i]
-
-
-        if taste(Expression):
-            start = i
-            expr: Expression = eat() # pyright: ignore[reportAssignmentType]
-            
-            tkns = expr.evaluate()
-            _ = tokens.pop(start)
-
-            # We must decrement i now because we just removed an item from the list
-            i -= 1
-
-            for x in range(len(tkns)):
-                tokens.insert(start+x, tkns[x])
-                i += 1
-            # print(f"{expr} -> {tkns}")
-
-
-        count = len(tokens)
-        if not haseat:
-            i+=1
-
-    return tokens
-
-
-def evalFunctions(tokens: list[Token]):
-    count = len(tokens)
-    if count == 0:
-        return tokens
-
-    i = 0
-    token: Token = tokens[i]
-
-    haseat = False
-
-    def taste(a: type[Token]):
-        return isinstance(tokens[i], a)
-
-    def eat():
-        nonlocal i, haseat
-        token = tokens[i]
-        i += 1 # the next index we will eat
-        haseat = True
-        return token
-
-    while i < count:
-        haseat = False
-        token = tokens[i]
-
-
-        if taste(Function):
-            fstart = i
-            token = eat()
-            func: Function = token # pyright: ignore[reportAssignmentType]
-            if taste(OpenParen):
-                token = eat()
-                inner: list[Token] = []
-                start = i
-                while i < count and not taste(CloseParen):
-                    token = eat()
-                    inner.append(token)
-
-                if taste(CloseParen):
-                    fend = i
-                    token = eat()
-                    if len(inner) == 1:
-                        if isinstance(inner[0], Literal):
-                            for _ in range(fend+1 - fstart):
-                                _ = tokens.pop(fstart)
-                                i -= 1
-                            tokens.insert(fstart, func.action(inner[0]))
-                        else:
-                            raise SyntaxError("Function paramaters expression did not return a Literal")
-                    elif len(inner) == 0:
-                        raise SyntaxError("Function needs parameters")
+                if len(inner) == 1:
+                    if isinstance(inner[0], Literal):
+                        for _ in range(fend+1 - fstart):
+                            state.remove_token(fstart)
+                        state.tokens.insert(fstart, func.action(inner[0]))
                     else:
-                        raise SyntaxError("Function has too many parameters. Likely a parsing error")
-
+                        raise FunctionError("Function parameters expression did not return a Literal", state.tokens, state.i)
+                elif len(inner) == 0:
+                    raise FunctionError("Function needs parameters", state.tokens, state.i-1)
                 else:
-                    raise SyntaxError("Missing closing parenthesis")
+                    raise FunctionError("Function has too many parameters. Likely a parsing error", state.tokens, state.i)
+
             else:
-                raise SyntaxError("Functions need parenthesis")
+                raise FunctionError("Missing closing parenthesis", state.tokens, state.i-1)
+        else:
+            raise FunctionError("Functions need parenthesis", state.tokens, state.i)
 
 
-        count = len(tokens)
-        if not haseat:
-            i+=1
-
-    return tokens
-
-
-def negations(tokens: list[Token]):
-    count = len(tokens)
-    if count == 0:
-        return tokens
-
-    i = 0
-    token: Token = tokens[i]
-
-    haseat = False
-
-    def taste(a: type[Token]):
-        return isinstance(tokens[i], a)
-
-    def eat():
-        nonlocal i, haseat
-        token = tokens[i]
-        i += 1 # technically the next index
-        haseat = True
-        return token
-
-    while i < count:
-        haseat = False
-        token = tokens[i]
-
-        if taste(Negate):
-            nstart = i
-            token = eat()
-            if taste(Literal):
-                literal: Literal = eat() # pyright: ignore[reportAssignmentType]
-                _ = tokens.pop(nstart)
-                literal.number *= -1
-            else:
-                raise SyntaxError("Attempted to negate a non-Literal token. An expression token likely failed evaluation.")
-
-        count = len(tokens)
-        if not haseat:
-            i+=1
-
-    return tokens
-
-
-def combineLiterals(tokens: list[Token]):
-    count = len(tokens)
-    if count == 0:
-        return tokens
-
-    i = 0
-    token: Token = tokens[i] # pyright: ignore[reportAssignmentType]
-
-    haseat = False
-
-    def taste(a: type[Token]):
-        return isinstance(tokens[i], a)
-
-    def eat() -> Token:
-        nonlocal i, haseat
-        token = tokens[i]
-        i += 1 # technically the next index
-        haseat = True
-        return token
-
-    while i < count:
-        haseat = False
-        token = tokens[i]
-
+@token_process
+def negations(state: TokenState):
+    taste = state.taste
+    eat = state.eat
+    if taste(Negate):
+        nstart = state.i
+        _ = eat()
         if taste(Literal):
-            if i+1 < count:
-                if isinstance(tokens[i+1], Literal):
-                    first: Literal = tokens.pop(i) # pyright: ignore[reportAssignmentType]
-                    second: Literal = tokens.pop(i) # pyright: ignore[reportAssignmentType]
-                    tokens.insert(i, Literal(first.number * second.number))
+            literal: Literal = eat() # pyright: ignore[reportAssignmentType]
+            _ = state.tokens.pop(nstart)
+            literal.number *= -1
+        else:
+            raise SyntaxError("Attempted to negate a non-Literal token", state.tokens, state.i)
 
-        count = len(tokens)
-        if not haseat:
-            i+=1
 
-    i = 0
+@token_process
+def twoLiterals(state: TokenState):
+    taste = state.taste
+    if taste(Literal):
+        if state.i+1 < len(state.tokens):
+            if isinstance(state.tokens[state.i+1], Literal):
+                first: Literal = state.tokens.pop(state.i) # pyright: ignore[reportAssignmentType]
+                second: Literal = state.tokens.pop(state.i) # pyright: ignore[reportAssignmentType]
+                state.tokens.insert(state.i, Literal(first.number * second.number))
 
+
+def combineLiterals(tokens: list[_Token]):
     # needed for correct order of operations
-    for _ in range(len([0 for x in tokens if isinstance(x, Op)])):
+    start_tokens = tokens.copy()
+    for j in range(len([0 for x in tokens if isinstance(x, Op)])):
         hi = -1
         hw = -1
         ho: Op = None # pyright: ignore[reportAssignmentType]
@@ -576,17 +525,50 @@ def combineLiterals(tokens: list[Token]):
                         _ = tokens.pop(hi-1)
                     try:
                         val: Literal = ho(left, right)
-                    except ZeroDivisionError:
-                        raise ZeroDivisionError("You can't divide by zero")
-                    # print(f"{ho} {prev} {nxt} {val}")
+                    except ZeroDivisionError as e:
+                        raise ZeroDivisionError(*e.args, start_tokens, hi + j*2)
                     tokens.insert(hi-1, val)
                 else:
-                    raise SyntaxError(f"Literal expected on the right of operator: '{ho}' '{nxt}' <x-")
+                    raise SyntaxError(f"Literal expected on the right of operator", start_tokens, hi + j*2)
+                    # raise SyntaxError(f"Literal expected on the right of operator: '{ho}' '{nxt}' <x-")
             else:
-                raise SyntaxError(f"Literal expected on the left of operator: -x>'{prev}' '{ho}'")
+                raise SyntaxError(f"Literal expected on the left of operator", start_tokens, hi + j*2)
+                # raise SyntaxError(f"Literal expected on the left of operator: -x>'{prev}' '{ho}'")
         else:
-            raise SyntaxError("There must be an expression on both sides of an operator")
+            raise SyntaxError("There must be an expression on both sides of an operator", start_tokens, hi + j*2)
+            # raise SyntaxError("There must be an expression on both sides of an operator")
 
     return tokens
 
 
+def interpret(inp: str) -> list[_Token]:
+    try:
+        tkns = tokenize(inp)
+        expr = Expression(tkns)
+        out = expr.evaluate()
+    except ZeroDivisionError as e:
+        msg, tks, idx = e.args
+        print(f"{msg}: {' '.join([x.out() for x in e.args[1]])}")
+        d = sum([len(tks[i].out()) for i in range(len(tks)) if i < idx])# + len(e.args[1])
+        print(f"{' ' * (len(msg) + 2 + d + idx)}^")
+    except SyntaxError as e:
+        msg, tks, idx = e.args
+        print(f"{msg}: {' '.join([x.out() for x in e.args[1]])}")
+        d = sum([len(tks[i].out()) for i in range(len(tks)) if i < idx])# + len(e.args[1])
+        print(f"{' ' * (len(msg) + 2 + d + idx)}^")
+    except TokenizerError as e:
+        msg, tks, idx, edx = e.args
+        print(f"{msg}: {''.join([x for x in e.args[1]])}")
+        d = sum([len(tks[i]) for i in range(len(tks)) if i < idx])# + len(e.args[1])
+        if idx == edx:
+            print(f"{' ' * (len(msg) + 2 + d)}^")
+        else:
+            print(f"{' ' * (len(msg) + 2 + d)}{'^' * (edx-idx+1)}")
+    except FunctionError as e:
+        msg, tks, idx = e.args
+        print(f"{msg}: {' '.join([x.out() for x in e.args[1]])}")
+        d = sum([len(tks[i].out()) for i in range(len(tks)) if i < idx])# + len(e.args[1])
+        print(f"{' ' * (len(msg) + 2 + d + idx)}^")
+    else:
+        return out
+    return []
